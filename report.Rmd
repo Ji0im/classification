@@ -1,0 +1,248 @@
+---
+title: "heart"
+output: pdf_document
+date: "2025-03-20"
+---
+
+```{r}
+
+library(tidyverse)
+
+heart_data <- read.csv("heart_failure.csv")
+
+str(heart_data)
+head(heart_data)
+
+summary(heart_data)
+
+```
+```{r}
+# View missing values in data
+colSums(is.na(heart_data))
+
+# Handling missing values (for example, using the median of a column)
+heart_data$blood_pressure[is.na(heart_data$blood_pressure)] <- median(heart_data$blood_pressure, na.rm = TRUE)
+heart_data$serum_creatinine[is.na(heart_data$serum_creatinine)] <- median(heart_data$serum_creatinine, na.rm = TRUE)
+
+# Dealing with blood pressure anomalies (assuming blood pressure should be between 0 and 200)
+heart_data$blood_pressure[heart_data$blood_pressure < 0 | heart_data$blood_pressure > 200] <- median(heart_data$blood_pressure, na.rm = TRUE)
+
+# Check the basic statistics of the data to make sure there are no outliers
+summary(heart_data)
+
+```
+```{r}
+# Clean up creatine kinase outliers, assuming the maximum should be less than 3000
+heart_data$creatinine_phosphokinase[heart_data$creatinine_phosphokinase > 3000] <- median(heart_data$creatinine_phosphokinase, na.rm = TRUE)
+
+# Clean up platelet outliers, assuming the normal range is between 150,000 and 450,000
+heart_data$platelets[heart_data$platelets > 450000 | heart_data$platelets < 150000] <- median(heart_data$platelets, na.rm = TRUE)
+
+# Clean up serum creatinine outliers, assuming the normal range is between 0.5 and 1.5
+heart_data$serum_creatinine[heart_data$serum_creatinine > 1.5] <- median(heart_data$serum_creatinine, na.rm = TRUE)
+
+# View the cleaned data
+summary(heart_data)
+
+```
+
+
+```{r}
+# The distribution of the target variable fatal_mi
+ggplot(heart_data, aes(x = factor(fatal_mi))) + 
+  geom_bar(fill = "lightblue") +
+  labs(title = "Distribution of Fatal MI", x = "Fatal MI", y = "Count")
+
+```
+```{r}
+# Look at the age distribution
+ggplot(heart_data, aes(x = age)) + 
+  geom_histogram(bins = 20, fill = "salmon", color = "black") +
+  labs(title = "Age Distribution", x = "Age", y = "Count")
+
+# Look at the blood pressure distribution
+ggplot(heart_data, aes(x = high_blood_pressure)) + 
+  geom_histogram(bins = 20, fill = "lightgreen", color = "black") +
+  labs(title = "Blood Pressure Distribution", x = "Blood Pressure", y = "Count")
+
+# Check the distribution of platelets
+ggplot(heart_data, aes(x = platelets)) + 
+  geom_histogram(bins = 20, fill = "lightblue", color = "black") +
+  labs(title = "Platelets Distribution", x = "Platelets", y = "Count")
+
+```
+```{r}
+ggplot(heart_data, aes(x = age, y = high_blood_pressure, color = factor(fatal_mi))) +
+  geom_point() +
+  labs(title = "Age vs Blood Pressure by Fatal MI", x = "Age", y = "Blood Pressure")
+
+ggplot(heart_data, aes(x = age, y = platelets, color = factor(fatal_mi))) +
+  geom_point() +
+  labs(title = "Age vs Platelets by Fatal MI", x = "Age", y = "Platelets")
+
+ggplot(heart_data, aes(x = age, fill = factor(fatal_mi))) +
+  geom_histogram(binwidth = 5, position = "dodge") +
+  labs(title = "Age Distribution by Fatal MI", x = "Age", y = "Count")
+
+```
+
+
+
+```{r}
+library(ROSE)
+
+data_balanced <- ROSE(fatal_mi ~ ., data = heart_data, seed = 123)$data
+
+ggplot(data_balanced, aes(x = factor(fatal_mi))) + 
+  geom_bar(fill = "lightblue") +
+  labs(title = "Balanced Distribution of Fatal MI", x = "Fatal MI", y = "Count")
+
+```
+```{r}
+
+table(heart_data$high_blood_pressure)
+
+heart_data$high_blood_pressure <- as.factor(heart_data$high_blood_pressure)
+
+table(heart_data$high_blood_pressure)
+
+```
+```{r}
+library(caret)
+library(rpart)
+
+set.seed(123)
+trainIndex <- createDataPartition(data_balanced$fatal_mi, p = 0.8, list = FALSE)
+trainData <- data_balanced[trainIndex, ]
+testData <- data_balanced[-trainIndex, ]
+
+log_model <- glm(fatal_mi ~ ., data = trainData, family = binomial)
+summary(log_model)
+
+log_pred <- predict(log_model, testData, type = "response")
+log_pred_class <- ifelse(log_pred > 0.5, 1, 0)
+
+log_conf_matrix <- confusionMatrix(as.factor(log_pred_class), as.factor(testData$fatal_mi))
+log_conf_matrix
+```
+```{r}
+tree_model <- rpart(fatal_mi ~ ., data = trainData, method = "class")
+summary(tree_model)
+
+# 预测决策树模型
+tree_pred <- predict(tree_model, testData, type = "class")
+
+# 决策树的混淆矩阵
+tree_conf_matrix <- confusionMatrix(as.factor(tree_pred), as.factor(testData$fatal_mi))
+tree_conf_matrix
+```
+```{r}
+library(randomForest)
+
+trainData$fatal_mi <- as.factor(trainData$fatal_mi)
+testData$fatal_mi <- as.factor(testData$fatal_mi)
+
+rf_model <- randomForest(fatal_mi ~ ., data = trainData)
+
+summary(rf_model)
+
+rf_pred <- predict(rf_model, testData)
+
+rf_pred <- factor(rf_pred, levels = levels(testData$fatal_mi))
+
+rf_conf_matrix <- confusionMatrix(rf_pred, as.factor(testData$fatal_mi))
+
+print(rf_conf_matrix)
+
+```
+
+
+```{r}
+# Load the pROC package
+library(pROC)
+
+rf_pred_prob <- predict(rf_model, testData, type = "prob")[, 2]
+roc_curve_rf <- roc(testData$fatal_mi, rf_pred_prob)
+
+tree_pred_prob <- predict(tree_model, testData, type = "prob")[, 2]
+roc_curve_tree <- roc(testData$fatal_mi, tree_pred_prob)
+
+log_pred_prob <- predict(log_model, testData, type = "response")
+roc_curve_log <- roc(testData$fatal_mi, log_pred_prob)
+
+plot(roc_curve_rf, main = "ROC Curves for Models", col = "blue", lwd = 2)  # 绘制随机森林 ROC 曲线
+plot(roc_curve_tree, col = "red", lwd = 2, add = TRUE)  # 添加决策树 ROC 曲线
+plot(roc_curve_log, col = "green", lwd = 2, add = TRUE)  # 添加逻辑回归 ROC 曲线
+
+legend("bottomright", legend = c("Random Forest", "Decision Tree", "Logistic Regression"), 
+       col = c("blue", "red", "green"), lwd = 2)
+
+```
+
+
+```{r}
+
+rf_pred_prob <- predict(rf_model, testData, type = "prob")[,2]  # 取出预测为 1 类的概率
+
+roc_curve <- roc(testData$fatal_mi, rf_pred_prob)
+
+plot(roc_curve, main = "ROC Curve for Random Forest", col = "blue", lwd = 2)
+
+auc_value <- auc(roc_curve)
+cat("AUC:", auc_value)
+```
+
+
+```{r}
+library(pROC)
+
+log_pred_prob <- predict(log_model, testData, type = "response")
+
+roc_curve <- roc(testData$fatal_mi, log_pred_prob)
+plot(roc_curve, main = "ROC Curve for Logistic Regression")
+
+auc(roc_curve)
+
+```
+```{r}
+tree_pred_prob <- predict(tree_model, testData, type = "prob")[, 2]
+
+roc_curve_tree <- roc(testData$fatal_mi, tree_pred_prob)
+plot(roc_curve_tree, main = "ROC Curve for Decision Tree")
+
+auc(roc_curve_tree)
+
+```
+
+
+```{r}
+library(randomForest)
+library(caret)
+
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+rfe_result <- rfe(trainData[, -ncol(trainData)], trainData$fatal_mi, sizes=c(1:10), rfeControl=control)
+
+rfe_result
+
+```
+```{r}
+library(caret)
+
+train_control <- trainControl(method="cv", number=10)
+
+log_reg_model <- train(fatal_mi ~ ., data=trainData, method="glm", family="binomial", trControl=train_control)
+
+print(log_reg_model)
+tree_model <- train(fatal_mi ~ ., data=trainData, method="rpart", trControl=train_control)
+
+print(tree_model)
+
+rf_model <- train(fatal_mi ~ ., data=trainData, method="rf", trControl=train_control)
+
+print(rf_model)
+
+```
+
+
+
+
